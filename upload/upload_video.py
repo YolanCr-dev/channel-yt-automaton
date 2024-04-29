@@ -47,7 +47,7 @@ class YouTubeUploader:
 
     def initialize_upload(self, options):
         youtube = self.get_authenticated_service()
-
+        
         tags = options.get("keywords", self.DEFAULT_KEYWORDS).split(",")
         title = options.get("title", "Your Video Title")
         description = options.get("description", "Your video description")
@@ -72,12 +72,38 @@ class YouTubeUploader:
             media_body=MediaFileUpload(options["file"], chunksize=-1, resumable=True)
         )
 
-        # print("will insert request with body")
-        # print(body)
-        # print(options["file"])
-        self.resumable_upload(insert_request)
+        file_dir = os.path.dirname(options["file"])
+        self.resumable_upload(insert_request, file_dir)
 
-    def resumable_upload(self, insert_request):
+    def set_thumbnail(self, file_dir, video_id):
+        youtube = self.get_authenticated_service()
+
+        # Check if thumbnail file exists
+        thumbnail_path = os.path.join(file_dir, "thumbnail.jpg")
+        while not os.path.exists(thumbnail_path):
+            print(f"Thumbnail file 'thumbnail.jpg' not found in the same folder as the video file.")
+            choice = input(f"Upload the thumbnail to this folder '{file_dir}' and press Enter to continue, or enter 'n' to skip (y/n): ")
+            if choice.lower() == 'n':
+                thumbnail_path = input("Enter the path to the thumbnail file: ")
+                continue
+            print(f"Thumbnail not found, do you want to continue without (y/n)?")
+            choice = input()
+            if choice.lower() == 'n':
+                continue
+
+        print("Great! I found the thumbnail.")
+
+        # Upload thumbnail
+        if os.path.exists(thumbnail_path):
+            print("Uploading thumbnail...")
+            thumbnail_upload_request = youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(thumbnail_path)
+            )
+            response = thumbnail_upload_request.execute()
+            print("Thumbnail uploaded successfully.")
+
+    def resumable_upload(self, insert_request, file_dir):
         response = None
         error = None
         retry = 0
@@ -89,7 +115,15 @@ class YouTubeUploader:
 
                 if response is not None:
                     if 'id' in response:
-                        print("Video id '%s' was successfully uploaded." % response['id'])
+                        video_id = response['id']
+                        print("Video id '%s' was successfully uploaded." % video_id)
+
+                        # Write the video ID to a text file
+                        with open('yt_upload.txt', 'w') as f:
+                            f.write(f"id={video_id}\n")
+
+                        self.set_thumbnail(file_dir, video_id)
+
                     else:
                         exit("The upload failed with an unexpected response: %s" % response)
             except HttpError as e:

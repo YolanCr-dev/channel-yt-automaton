@@ -8,12 +8,17 @@ from pytube.innertube import _default_clients
 from upload.upload_video import YouTubeUploader
 
 from dotenv import load_dotenv
-load_dotenv() # Load environment variables from .env file
+load_dotenv('.env.local') # Load environment variables from .env file
+
+import pickle
+
+from PIL import Image
 
 
 # Upload
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 
@@ -21,8 +26,17 @@ _default_clients["ANDROID_MUSIC"] = _default_clients["ANDROID_CREATOR"]
 
 # Set up YouTube Data API service
 def get_youtube_service():
-    api_key = os.getenv('YOUTUBE_API')  # Replace with your API key
-    youtube = build('youtube', 'v3', developerKey=api_key)
+    # Load client secrets from file
+    flow = InstalledAppFlow.from_client_secrets_file(
+        'client_secrets.json', scopes=['https://www.googleapis.com/auth/youtube.force-ssl'])
+    creds = flow.run_local_server(port=0)
+
+    # Save the credentials for later use
+    with open('token.pickle', 'wb') as token:
+        pickle.dump(creds, token)
+
+    # Build the YouTube Data API service
+    youtube = build('youtube', 'v3', credentials=creds)
     return youtube
 
 # Retrieve English captions for the video
@@ -59,16 +73,47 @@ def extract_video_id(url):
     video_id = match.group() if match else None
     return video_id
 
-def download_from_yt(url, output_dir="ASSETS/CLIPS"):
+def crop_image(image_path):
+    # Get the absolute path of the directory containing the script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     
+    # Construct the absolute path to the image
+    abs_image_path = os.path.join(script_dir, image_path)
+    
+    # Open the image
+    img = Image.open(abs_image_path)
+    
+    # Crop the image to 16:9 aspect ratio
+    width, height = img.size
+    aspect_ratio = 16 / 9
+    if width / height > aspect_ratio:
+        # Crop horizontally
+        new_width = int(height * aspect_ratio)
+        left = (width - new_width) / 2
+        right = left + new_width
+        img = img.crop((left, 0, right, height))
+    else:
+        # Crop vertically
+        new_height = int(width / aspect_ratio)
+        top = (height - new_height) / 2
+        bottom = top + new_height
+        img = img.crop((0, top, width, bottom))
+    
+    # Resize the cropped image to 1280x720
+    img = img.resize((1280, 720), Image.ANTIALIAS)
+    
+    # Save the scaled image
+    img.save(abs_image_path, format='JPEG')
+
+def download_from_yt(url, output_dir="ASSETS/CLIPS"):
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
     # Get YouTube video
     yt = YouTube(url,
-                 use_oauth=True,
-                 allow_oauth_cache=True,
-                 )
+                use_oauth=True,
+                allow_oauth_cache=True,
+                )
 
     # Sanitize title for folder and filename
     title = sanitize_filename(yt.title)
@@ -89,40 +134,33 @@ def download_from_yt(url, output_dir="ASSETS/CLIPS"):
     # Get the filename from the temp file path
     temp_filename = os.path.basename(temp_file_path)
 
-    # Print the new filename without actually renaming it
+    # Construct the new filename
     new_filename = title + "." + temp_filename.split(".")[-1]
     new_file_path = os.path.join(output_path, new_filename)
-    print("Downloaded", new_filename)
+
+    # Rename the downloaded file to the new filename
+    os.rename(temp_file_path, new_file_path)
+    print("Downloaded and renamed to", new_filename)
 
     # Download the thumbnail
+    print("going to download the thumnbnail")
     thumbnail_url = yt.thumbnail_url
-    thumbnail_filename = title + "_thumbnail.jpg"
+    thumbnail_filename = "thumbnail.jpg"
     thumbnail_path = os.path.join(output_path, thumbnail_filename)
     with open(thumbnail_path, 'wb') as thumbnail_file:
         thumbnail_file.write(requests.get(thumbnail_url).content)
+    crop_image(thumbnail_path)
 
-   # Check if video ID is extracted successfully
-    if video_id:
-        captions_id = get_english_captions(video_id)
-        output_path = 'captions.srt'
-        download_captions(video_id, captions_id, output_path)
-    else:
-        print("Invalid YouTube URL. Please provide a valid URL.")
-
-    # Download English subtitles (if available) as SRT file
-    # subtitles = yt.captions.get_by_language_code('en')
-    # if subtitles:
-    #     subtitles_file_path = os.path.join(output_path, title + "_subtitles.srt")
-    #     with open(subtitles_file_path, 'w', encoding='utf-8') as subtitles_file:
-    #         subtitles_file.write(subtitles.generate_srt_captions())
-
-    #     print("Downloaded subtitles:", subtitles_file_path)
+    # Check if video ID is extracted successfully
+    # print("going to download the captions")
+    # if video_id:
+    #     captions_id = get_english_captions(video_id)
+    #     output_path = 'captions.srt'
+    #     download_captions(video_id, captions_id, output_path)
     # else:
-    #     print("No English subtitles found for this video.")
+    #     print("Invalid YouTube URL. Please provide a valid URL.")
 
 def upload_to_youtube(video_path, title, description, tags, privacy_status):
-
-        
     # Example usage:
     # upload_to_youtube(
     #     video_path='ASSETS/CLIPS/your_video.mp4',
@@ -182,7 +220,11 @@ def main():
                 elif (type.lower() == "clip"):
                     download_from_yt(url, "../../ASSETS/CLIPS/")
                 # https://www.youtube.com/watch?v=3p6qW7CBxxA
-        
+
+        elif command.startswith("connect"):
+            yt = get_youtube_service()
+            print(yt)
+
         elif command.startswith("upload"):            
             uploader = YouTubeUploader("client_secrets.json")
             args = command.split()
