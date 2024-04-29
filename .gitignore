@@ -1,6 +1,9 @@
 # ignore all .mp4
 *.mp4
 *.mp3
+*.jpg
+
+ASSETS/
 
 client_secrets.json
 .env.local
