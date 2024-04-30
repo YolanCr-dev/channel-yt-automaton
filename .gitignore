@@ -5,6 +5,7 @@
 
 ASSETS/
 
+CLIENT_SECRETS/*
 client_secrets.json
 .env.local
 oauth2.json

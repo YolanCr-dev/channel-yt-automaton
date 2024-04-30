@@ -29,7 +29,7 @@ class YouTubeUploader:
 
         self.DEFAULT_KEYWORDS = "movie clip, cinema, popular"
         self.DEFAULT_CATEGORY = "24"
-        self.DEFAULT_PRIVACY_STATUS = "private"
+        self.DEFAULT_PRIVACYSTATUS = "private"
 
     def get_authenticated_service(self):
         flow = flow_from_clientsecrets(
@@ -51,13 +51,16 @@ class YouTubeUploader:
         tags = options.get("keywords", self.DEFAULT_KEYWORDS).split(",")
         title = options.get("title", "Your Video Title")
         description = options.get("description", "Your video description")
+        description_tail = f'''🎬Fair use.
+Copyright Disclaimer Under Section 107 of the Copyright Act 1976, allowance is made for "fair use" for purposes such as criticism, comment, news reporting, teaching, scholarship, and research. Fair use is a use permitted by copyright statute that might otherwise be infringing. Non-profit, educational or personal use tips the balance in favor of fair use. No copyright infringement intended.'''
+        full_description = f"{description}\n\n{description_tail}"
         category = options.get("category", self.DEFAULT_CATEGORY)
-        privacy_status = options.get("privacyStatus", self.DEFAULT_PRIVACY_STATUS)
+        privacy_status = options.get("privacyStatus", self.DEFAULT_PRIVACYSTATUS)
 
         body = dict(
             snippet=dict(
                 title=title,
-                description=description,
+                description=full_description,
                 tags=tags,
                 categoryId=category
             ),

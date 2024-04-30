@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import subprocess
 from moviepy.editor import VideoFileClip
 from lib.utility import sanitize_files, sanitize_filename
 from pytube import YouTube
@@ -13,7 +14,7 @@ load_dotenv('.env.local') # Load environment variables from .env file
 import pickle
 
 from PIL import Image
-
+from moviepy.editor import VideoFileClip, concatenate_videoclips
 
 # Upload
 from google.oauth2.credentials import Credentials
@@ -105,10 +106,43 @@ def crop_image(image_path):
     # Save the scaled image
     img.save(abs_image_path, format='JPEG')
 
-def download_from_yt(url, output_dir="ASSETS/CLIPS"):
+def trim_video(input_path, trim_start=0, trim_end=0):
+    # Load the video clip
+    video_clip = VideoFileClip(input_path)
+
+    # Define the duration to trim from the start and end
+    if trim_end is None:
+        trim_end = video_clip.duration - 1.0
+
+    # Trim the video clip
+    trimmed_clip = video_clip.subclip(trim_start, trim_end)
+
+    # Close the original video clip
+    video_clip.reader.close()
+
+    # Get the filename without extension
+    filename, _ = os.path.splitext(input_path)
+
+    # Define the output path for the trimmed video
+    output_path = filename + "_trimmed.mp4"
+
+    # Write the trimmed clip to the output file
+    trimmed_clip.write_videofile(output_path)
+
+    # Close the trimmed video clip
+    trimmed_clip.reader.close()
+
+    # Delete the original video file
+    os.remove(os.path.abspath(input_path))
+
+    # Rename the trimmed file to match the original filename
+    os.rename(output_path, os.path.abspath(input_path))
+
+def download_from_yt(url, start_time=0, end_time=0, output_dir="ASSETS/CLIPS",):
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
+    print("this url", url)
     # Get YouTube video
     yt = YouTube(url,
                 use_oauth=True,
@@ -125,31 +159,44 @@ def download_from_yt(url, output_dir="ASSETS/CLIPS"):
     output_path = os.path.join(output_dir, title)
     os.makedirs(output_path, exist_ok=True)
 
-    # Select the highest resolution stream
+    # Get streams
+    streams = yt.streams.filter(progressive=True, file_extension='mp4')
+
+    # Get highest resolution stream
     stream = yt.streams.get_highest_resolution()
 
-    # Download the video
-    temp_file_path = stream.download(output_path=output_path)
+    # Download the video using ffmpeg with specified start and end time
+    output_file_path = os.path.join(output_path, f'{title}.mp4')
+    command = ['ffmpeg', '-ss', str(start_time), '-i', stream.url, '-t', str(end_time - start_time), '-c:v', 'copy', '-c:a', 'copy', output_file_path]
+    subprocess.run(command)
 
-    # Get the filename from the temp file path
-    temp_filename = os.path.basename(temp_file_path)
-
-    # Construct the new filename
-    new_filename = title + "." + temp_filename.split(".")[-1]
-    new_file_path = os.path.join(output_path, new_filename)
-
-    # Rename the downloaded file to the new filename
-    os.rename(temp_file_path, new_file_path)
-    print("Downloaded and renamed to", new_filename)
+    print("Downloaded video")
 
     # Download the thumbnail
-    print("going to download the thumnbnail")
     thumbnail_url = yt.thumbnail_url
     thumbnail_filename = "thumbnail.jpg"
     thumbnail_path = os.path.join(output_path, thumbnail_filename)
     with open(thumbnail_path, 'wb') as thumbnail_file:
         thumbnail_file.write(requests.get(thumbnail_url).content)
     crop_image(thumbnail_path)
+
+    # Prompt the user if they want to upload the file
+    upload_choice = input("Do you want to upload this file? (y/n): ").lower()
+    
+    while True:
+        # Prompt the user if they want to upload the file
+        upload_choice = input("Do you want to upload this file? (y/n): ").lower()
+
+        if upload_choice == 'y':
+            upload_to_youtube(output_file_path)
+            break  # Exit the loop if 'y' is entered
+        elif upload_choice == 'n':
+            print("File not uploaded.")
+            break  # Exit the loop if 'n' is entered
+        else:
+            print("Invalid choice. Please enter 'y' or 'n'.")
+
+
 
     # Check if video ID is extracted successfully
     # print("going to download the captions")
@@ -160,107 +207,207 @@ def download_from_yt(url, output_dir="ASSETS/CLIPS"):
     # else:
     #     print("Invalid YouTube URL. Please provide a valid URL.")
 
-def upload_to_youtube(video_path, title, description, tags, privacy_status):
-    # Example usage:
-    # upload_to_youtube(
-    #     video_path='ASSETS/CLIPS/your_video.mp4',
-    #     title='Your Video Title',
-    #     description='Your video description',
-    #     tags=['tag1', 'tag2', 'tag3'],
-    #     privacy_status='private'  # 'private', 'public', or 'unlisted'
-    # )
+def upload_to_youtube(video_path, title='', description='', tags='', category='', privacy_status=''):
 
+    # Initialize YouTubeUploader
+    uploader = YouTubeUploader("client_secrets.json")
 
-    # Load credentials from client_secrets.json (you need to create this file with your client secrets)
-    flow = InstalledAppFlow.from_client_secrets_file(
-        'client_secrets.json',
-        scopes=['https://www.googleapis.com/auth/youtube.upload']
-    )
-    credentials = flow.run_local_server()
-
-    # Build the YouTube service
-    youtube = build('youtube', 'v3', credentials=credentials)
-
-    # Upload video
-    request_body = {
-        'snippet': {
-            'title': title,
-            'description': description,
-            'tags': tags
-        },
-        'status': {
-            'privacyStatus': privacy_status
-        }
+    # Construct options dictionary
+    options = {
+        "file": video_path,
+        "title": title,
+        "description": description,
+        "keywords": tags,
+        "category": category,
+        "privacyStatus": privacy_status
     }
 
-    media_file = MediaFileUpload(video_path)
+    # Prompt for missing arguments
+    required_args = ["file", "title", "description", "category", "keywords", "privacyStatus"]
+    # Prompt for missing or empty arguments
+    missing_or_empty_args = [arg for arg in required_args if arg not in options or not options[arg]]
 
-    response = youtube.videos().insert(
-        part='snippet,status',
-        body=request_body,
-        media_body=media_file
-    ).execute()
+    if missing_or_empty_args:
+        for arg in missing_or_empty_args:
+            default_value = getattr(uploader, f"DEFAULT_{arg.upper()}", None)
+            if arg == "file":
+                while True:
+                    value = input(f"Enter {arg.capitalize()} (default: {default_value}): ")
+                    value = value.strip() or default_value
+                    if os.path.exists(value):
+                        options[arg] = value
+                        break
+                    else:
+                        print("ERROR: File does not exist. Please enter a valid file path.")
+            else:
+                value = input(f"Enter {arg.capitalize()} (default: {default_value}): ").strip()
+                options[arg] = value if value else default_value
 
-    print("Video uploaded successfully! Video ID:", response['id'])
+    # Upload the video
+    # print(options)
+    print("Uploading video...")
+    uploader.initialize_upload(options)
+    print("Video uploaded successfully.")
+
+def assemble_video(topic, id): 
+    # Get video clips from each folder
+    clips = []
+    for i in range(1, 4):  # Assuming 3 folders
+        folder_path = f"ASSETS/VIDEOS/{topic}/{id}/{i}"
+        # Assuming random_file_names are all .mp4
+        video_files = os.listdir(folder_path)
+        for video_file in video_files:
+            if video_file.endswith(".mp4"):
+                clip = VideoFileClip(os.path.join(folder_path, video_file))
+                clips.append(clip)
+    
+    # Add outro
+    outro_clip = VideoFileClip("ASSETS/OUTRO/OUTRO-001.mp4")
+    # Concatenate video clips  
+    final_clip = concatenate_videoclips([*clips, outro_clip], method="compose")
+    
+    # Write final video
+    output_path = f"ASSETS/VIDEOS/{topic}/{id}/{topic}_{id}.mp4"
+    final_clip.write_videofile(output_path, codec="libx264", fps=24)
+
+    while True:
+        # Prompt the user if they want to upload the file
+        upload_choice = input("Do you want to upload this file? (y/n): ").lower()
+
+        if upload_choice == 'y':
+            upload_to_youtube(output_path)
+            break  # Exit the loop if 'y' is entered
+        elif upload_choice == 'n':
+            print("File not uploaded.")
+            break  # Exit the loop if 'n' is entered
+        else:
+            print("Invalid choice. Please enter 'y' or 'n'.")
+
+def parse_time_param(param):
+    # Extract start and end times from URL query parameters
+    start_index = param.find("&start=")
+    end_index = param.find("&end=")
+    if start_index != -1 and end_index != -1:
+        start_time_str = param[start_index + len("&start="):end_index]
+        end_time_str = param[end_index + len("&end="):]
+        
+        start_time_secs = time_to_seconds(start_time_str)
+        end_time_secs = time_to_seconds(end_time_str)
+        
+        return start_time_secs, end_time_secs
+    else:
+        return None, None
+
+def time_to_seconds(time_str):
+    # Convert time in the format mm:ss to seconds
+    minutes, seconds = map(int, time_str.split(":"))
+    return minutes * 60 + seconds
 
 def main():
     while True:
         command = input("Enter command (e.g., ): ")
 
         if command.startswith("download"):
-            args = command[len("download"):].strip().split()
-            if len(args) == 1:
-                print("arg 1", args)
-                youtube_url = args[0]
-                download_from_yt(youtube_url)
-            elif len(args) == 2:
-                type, url = args
-                if (type.lower() == "quote"):
-                    download_from_yt(url, "../../ASSETS/QUOTES/")
-                elif (type.lower() == "clip"):
-                    download_from_yt(url, "../../ASSETS/CLIPS/")
-                # https://www.youtube.com/watch?v=3p6qW7CBxxA
+            # Parse command arguments
+            args = command.split()
+            output_dir = None
+            youtube_url1 = youtube_url2 = youtube_url3 = None
+            start_time1 = start_time2 = start_time3 = 0
+            end_time1 = end_time2 = end_time3 = 0
+
+            for arg in args:
+                if arg.startswith("--url1="):
+                    youtube_url1 = arg.split("=", 1)[1]
+                    # youtube_url1 = arg.split("&")[0]
+                    start_time1, end_time1 = parse_time_param(arg)
+                elif arg.startswith("--url2="):
+                    youtube_url2 = arg.split("&")[0]
+                    start_time2, end_time2 = parse_time_param(arg)
+                elif arg.startswith("--url3="):
+                    youtube_url3 = arg.split("&")[0]
+                    start_time3, end_time3 = parse_time_param(arg)
+                elif arg.startswith("--topic="):
+                    topic = arg.split("=")[1]
+                    output_dir = f"ASSETS/VIDEOS/{topic}"
+
+            if youtube_url1:
+                download_from_yt(youtube_url1, start_time1, end_time1, output_dir)
+            if youtube_url2:
+                download_from_yt(youtube_url2, start_time2, end_time2, output_dir)
+            if youtube_url3:
+                download_from_yt(youtube_url3, start_time3, end_time3, output_dir)  
+
+
+
+
+        elif command.startswith("trim"):
+            # Parse command arguments
+            args = command.split()
+
+            # Extract parameters from command
+            path = ""
+            trim_start = 0
+            trim_end = 0
+
+            for arg in args:
+                if arg.startswith("--path="):
+                    path = arg.split("=")[1]
+                elif arg.startswith("--trim_start="):
+                    trim_start = arg.split("=")[1]
+                elif arg.startswith("--trim_end="):
+                    trim_end = arg.split("=")[1]
+            
+            trim_video(path, trim_start, trim_end)
 
         elif command.startswith("connect"):
             yt = get_youtube_service()
             print(yt)
 
-        elif command.startswith("upload"):            
-            uploader = YouTubeUploader("client_secrets.json")
+        elif command.startswith("assemble"):
+            # Parse command arguments
             args = command.split()
 
-            options = {}
+            # Extract parameters from command
+            topic = ""
+            id = ""
+
             for arg in args:
-                if arg.startswith("--"):
-                    key, value = arg.split("=")
-                    options[key[2:]] = value.strip("'")
+                if arg.startswith("--topic="):
+                    topic = arg.split("=")[1]
+                elif arg.startswith("--id="):
+                    id = arg.split("=")[1]
+                
+            assemble_video(topic, id)
 
-            required_args = ["file", "title", "description", "category", "keywords", "privacyStatus"]
-            missing_args = [arg for arg in required_args if arg not in options]
+        elif command.startswith("upload"):            
+            # Parse command arguments
+            args = command.split()
 
-            if missing_args:
-                for arg in missing_args:
-                    default_value = getattr(uploader, f"DEFAULT_{arg.upper()}", None)
-                    
-                    # Inside the loop where missing arguments are handled
-                    if arg == "file":
-                        while True:
-                            value = input(f"Enter {arg.capitalize()} (default: {default_value}): ")
-                            value = value.strip() or default_value
-                            if os.path.exists(value):
-                                options[arg] = value
-                                break
-                            else:
-                                print("ERROR: File does not exist. Please enter a valid file path.")
-                    else:
-                        value = input(f"Enter {arg.capitalize()} (default: {default_value}): ").strip()
-                        options[arg] = value if value else default_value
+            # Extract parameters from command
+            video_path = ""
+            title = ""
+            description = ""
+            tags = ""
+            category = ""
+            privacy_status = ""
 
-            else:
-                uploader.initialize_upload(options)
+            for arg in args:
+                if arg.startswith("--video_path="):
+                    video_path = arg.split("=")[1]
+                elif arg.startswith("--title="):
+                    title = arg.split("=")[1]
+                elif arg.startswith("--description="):
+                    description = arg.split("=")[1]
+                elif arg.startswith("--tags="):
+                    tags = arg.split("=")[1]
+                elif arg.startswith("--category="):
+                    category = arg.split("=")[1]
+                elif arg.startswith("--privacy_status="):
+                    privacy_status = arg.split("=")[1]
 
-            print("go upload")
-            uploader.initialize_upload(options)
+            # Call upload_to_youtube function
+            upload_to_youtube(video_path, title, description, tags, category, privacy_status)
+
 
         else:
             print("Invalid command")
