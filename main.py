@@ -2,6 +2,10 @@ import os
 import re
 import requests
 import subprocess
+from datetime import datetime
+import shutil
+import pickle
+
 from moviepy.editor import VideoFileClip
 from lib.utility import sanitize_files, sanitize_filename
 from pytube import YouTube
@@ -11,10 +15,10 @@ from upload.upload_video import YouTubeUploader
 from dotenv import load_dotenv
 load_dotenv('.env.local') # Load environment variables from .env file
 
-import pickle
 
 from PIL import Image
 from moviepy.editor import VideoFileClip, concatenate_videoclips
+from moviepy.video.fx.all import resize
 
 # Upload
 from google.oauth2.credentials import Credentials
@@ -106,73 +110,70 @@ def crop_image(image_path):
     # Save the scaled image
     img.save(abs_image_path, format='JPEG')
 
-def trim_video(input_path, trim_start=0, trim_end=0):
+def trim_video(input_path, trim_start=0, trim_end=None):
     # Load the video clip
     video_clip = VideoFileClip(input_path)
 
-    # Define the duration to trim from the start and end
+    # Define the duration of the video as a float
+    duration = float(video_clip.duration)
+
+    # Set default trim_end to the end of the video
     if trim_end is None:
-        trim_end = video_clip.duration - 1.0
+        trim_end = duration
+    else:
+        trim_end = duration - trim_end
+        
+
+    # Ensure trim_start and trim_end are within the duration of the video
+    trim_start = min(max(float(trim_start), 0), duration)
+    trim_end = min(max(float(trim_end), 0), duration)
+
+    # Check if the trim operation results in a non-negative duration
+    if trim_start >= trim_end:
+        print("Error: Invalid trim parameters. Trim end time should be greater than trim start time.")
+        return
 
     # Trim the video clip
     trimmed_clip = video_clip.subclip(trim_start, trim_end)
 
-    # Close the original video clip
-    video_clip.reader.close()
-
-    # Get the filename without extension
-    filename, _ = os.path.splitext(input_path)
-
     # Define the output path for the trimmed video
-    output_path = filename + "_trimmed.mp4"
+    output_path = input_path.replace(".mp4", "_trimmed.mp4")
 
     # Write the trimmed clip to the output file
     trimmed_clip.write_videofile(output_path)
 
-    # Close the trimmed video clip
-    trimmed_clip.reader.close()
+    # Close the video clips
+    video_clip.close()
+    trimmed_clip.close()
 
-    # Delete the original video file
-    os.remove(os.path.abspath(input_path))
+    # Optionally, you may delete or rename the original video file here
 
-    # Rename the trimmed file to match the original filename
-    os.rename(output_path, os.path.abspath(input_path))
+    return output_path
 
 def download_from_yt(url, start_time=0, end_time=0, output_dir="ASSETS/CLIPS",):
-    # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
-
-    print("this url", url)
-    # Get YouTube video
-    yt = YouTube(url,
-                use_oauth=True,
-                allow_oauth_cache=True,
-                )
-
-    # Sanitize title for folder and filename
+    yt = YouTube(url, use_oauth=True, allow_oauth_cache=True)
     title = sanitize_filename(yt.title)
-
-    # Extract video ID from URL
-    video_id = extract_video_id(url)
-
-    # Create directory with sanitized title
     output_path = os.path.join(output_dir, title)
     os.makedirs(output_path, exist_ok=True)
 
-    # Get streams
-    streams = yt.streams.filter(progressive=True, file_extension='mp4')
-
-    # Get highest resolution stream
     stream = yt.streams.get_highest_resolution()
-
-    # Download the video using ffmpeg with specified start and end time
     output_file_path = os.path.join(output_path, f'{title}.mp4')
+
+    # Set start_time to 0 if it is None
+    start_time = 0 if start_time is None else start_time
+
+    # Get the duration of the video in seconds
+    duration = yt.length
+
+    # If end_time is None, set it to the duration of the video
+    print(end_time)
+    if end_time is None:
+        end_time = duration
+
     command = ['ffmpeg', '-ss', str(start_time), '-i', stream.url, '-t', str(end_time - start_time), '-c:v', 'copy', '-c:a', 'copy', output_file_path]
     subprocess.run(command)
 
-    print("Downloaded video")
-
-    # Download the thumbnail
     thumbnail_url = yt.thumbnail_url
     thumbnail_filename = "thumbnail.jpg"
     thumbnail_path = os.path.join(output_path, thumbnail_filename)
@@ -259,16 +260,20 @@ def assemble_video(topic, id):
         for video_file in video_files:
             if video_file.endswith(".mp4"):
                 clip = VideoFileClip(os.path.join(folder_path, video_file))
+                # Resize the clip to 1920x1080
+                clip = clip.resize((1920, 1080))
                 clips.append(clip)
     
     # Add outro
     outro_clip = VideoFileClip("ASSETS/OUTRO/OUTRO-001.mp4")
+    # Resize the outro clip to 1920x1080
+    outro_clip = outro_clip.resize((1920, 1080))
     # Concatenate video clips  
     final_clip = concatenate_videoclips([*clips, outro_clip], method="compose")
     
     # Write final video
     output_path = f"ASSETS/VIDEOS/{topic}/{id}/{topic}_{id}.mp4"
-    final_clip.write_videofile(output_path, codec="libx264", fps=24)
+    final_clip.write_videofile(output_path, fps=24)
 
     while True:
         # Prompt the user if they want to upload the file
@@ -284,9 +289,10 @@ def assemble_video(topic, id):
             print("Invalid choice. Please enter 'y' or 'n'.")
 
 def parse_time_param(param):
-    # Extract start and end times from URL query parameters
+    print(param)
     start_index = param.find("&start=")
     end_index = param.find("&end=")
+    print(end_index)
     if start_index != -1 and end_index != -1:
         start_time_str = param[start_index + len("&start="):end_index]
         end_time_str = param[end_index + len("&end="):]
@@ -299,46 +305,87 @@ def parse_time_param(param):
         return None, None
 
 def time_to_seconds(time_str):
-    # Convert time in the format mm:ss to seconds
     minutes, seconds = map(int, time_str.split(":"))
     return minutes * 60 + seconds
 
+def assemble_videos(topic, assembly_folder):
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    new_folder_path = os.path.join("ASSETS/VIDEOS", topic, timestamp)
+    os.makedirs(new_folder_path, exist_ok=True)
+
+    for i, folder_name in enumerate(sorted(os.listdir(assembly_folder))):
+        src_folder = os.path.join(assembly_folder, folder_name)
+        dst_folder = os.path.join(new_folder_path, str(i + 1))
+        os.makedirs(dst_folder, exist_ok=True)
+        
+        # Counter to keep track of the number of files moved
+        file_count = 0
+        
+        for filename in os.listdir(src_folder):
+            src_file_path = os.path.join(src_folder, filename)
+            dst_file_path = os.path.join(dst_folder, filename)
+            
+            # Move the file only if the file count is less than 3
+            if file_count < 3:
+                shutil.move(src_file_path, dst_file_path)  # Use shutil.move to move files
+                file_count += 1
+            else:
+                break  # Break out of the loop if three files are already moved
+        
+        os.rmdir(src_folder)  # Remove the old folder
+
+    assemble_video(topic, timestamp)
+    
 def main():
     while True:
         command = input("Enter command (e.g., ): ")
 
         if command.startswith("download"):
-            # Parse command arguments
             args = command.split()
             output_dir = None
-            youtube_url1 = youtube_url2 = youtube_url3 = None
-            start_time1 = start_time2 = start_time3 = 0
-            end_time1 = end_time2 = end_time3 = 0
+            youtube_urls = []
+            start_times = []
+            end_times = []
+            topic = None
 
-            for arg in args:
-                if arg.startswith("--url1="):
-                    youtube_url1 = arg.split("=", 1)[1]
-                    # youtube_url1 = arg.split("&")[0]
-                    start_time1, end_time1 = parse_time_param(arg)
-                elif arg.startswith("--url2="):
-                    youtube_url2 = arg.split("&")[0]
-                    start_time2, end_time2 = parse_time_param(arg)
-                elif arg.startswith("--url3="):
-                    youtube_url3 = arg.split("&")[0]
-                    start_time3, end_time3 = parse_time_param(arg)
+            for i, arg in enumerate(args):
+                if arg.startswith("--url"):
+                    # Check if there are enough elements in the list
+                    print("arg starts with url", arg)
+                    if i < len(args):
+                        start_index = arg.find("=") + 1  # Find the index of the first '=' sign and add 1 to exclude it
+                        end_index = arg.find("&") if "&" in arg else len(arg)  # Find the index of the first '&' sign
+                        youtube_url = arg[start_index:end_index]
+                        youtube_urls.append(youtube_url)
+                        start_time, end_time = parse_time_param(arg)  # Parse time parameters from the same argument
+                        start_times.append(start_time)
+                        end_times.append(end_time)
+                        print("start_time", start_time)
+                        print("end_time", end_time)
+                    else:
+                        print("Error: Insufficient arguments for URL.")
+                        break  # Exit the loop if there are insufficient arguments
                 elif arg.startswith("--topic="):
                     topic = arg.split("=")[1]
                     output_dir = f"ASSETS/VIDEOS/{topic}"
 
-            if youtube_url1:
-                download_from_yt(youtube_url1, start_time1, end_time1, output_dir)
-            if youtube_url2:
-                download_from_yt(youtube_url2, start_time2, end_time2, output_dir)
-            if youtube_url3:
-                download_from_yt(youtube_url3, start_time3, end_time3, output_dir)  
+            if topic == None:
+                output_dir = f"ASSETS/CLIPS"
 
+            if output_dir:
+                # Create the output directory if it doesn't exist
+                os.makedirs(output_dir, exist_ok=True)
+                
+                for i, url in enumerate(youtube_urls):
+                    assembly_folder = os.path.join(output_dir, "assembly")
+                    os.makedirs(assembly_folder, exist_ok=True)  # Create the 'assembly' folder if it doesn't exist
+                    download_from_yt(url, start_times[i], end_times[i], assembly_folder)
+                
+                    assembly_folder = os.path.abspath(assembly_folder)
+                    num_folders = len([name for name in os.listdir(assembly_folder) if os.path.isdir(os.path.join(assembly_folder, name))])
 
-
+                    if num_folders == 3:
+                        assemble_videos(topic, assembly_folder)
 
         elif command.startswith("trim"):
             # Parse command arguments
@@ -368,7 +415,7 @@ def main():
             args = command.split()
 
             # Extract parameters from command
-            topic = ""
+            topic = None
             id = ""
 
             for arg in args:
@@ -377,7 +424,11 @@ def main():
                 elif arg.startswith("--id="):
                     id = arg.split("=")[1]
                 
-            assemble_video(topic, id)
+            if topic:
+                output_dir = f"ASSETS/VIDEOS/{topic}"
+                assembly_folder = os.path.abspath(os.path.join(output_dir, "assembly"))
+                assemble_videos(topic, assembly_folder)
+                # assemble_video(topic, id)
 
         elif command.startswith("upload"):            
             # Parse command arguments
@@ -390,6 +441,8 @@ def main():
             tags = ""
             category = ""
             privacy_status = ""
+            topic = ""
+            id = ""
 
             for arg in args:
                 if arg.startswith("--video_path="):
@@ -404,6 +457,18 @@ def main():
                     category = arg.split("=")[1]
                 elif arg.startswith("--privacy_status="):
                     privacy_status = arg.split("=")[1]
+                elif arg.startswith("--topic="):
+                    topic = arg.split("=")[1]
+                elif arg.startswith("--id="):
+                    id = arg.split("=")[1]
+
+            if not video_path and topic and id:
+                directory = os.path.join("ASSETS", "VIDEOS", topic, id)
+                # Assuming the first MP4 file is what you want
+                for file_name in os.listdir(directory):
+                    if file_name.endswith(".mp4"):
+                        video_path = os.path.join(directory, file_name)
+                        break  # Stop after finding the first MP4 file
 
             # Call upload_to_youtube function
             upload_to_youtube(video_path, title, description, tags, category, privacy_status)

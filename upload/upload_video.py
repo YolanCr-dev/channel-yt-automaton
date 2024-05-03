@@ -129,6 +129,7 @@ Copyright Disclaimer Under Section 107 of the Copyright Act 1976, allowance is m
 
                     else:
                         exit("The upload failed with an unexpected response: %s" % response)
+                        
             except HttpError as e:
                 if e.resp.status in self.RETRIABLE_STATUS_CODES:
                     error = "A retriable HTTP error %d occurred:\n%s" % (e.resp.status, e.content)
