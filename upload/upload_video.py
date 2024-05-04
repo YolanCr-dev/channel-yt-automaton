@@ -57,6 +57,7 @@ class YouTubeUploader:
         tags = options.get("keywords", self.DEFAULT_KEYWORDS).split(",")
         category = options.get("category", self.DEFAULT_CATEGORY)
         privacy_status = options.get("privacyStatus", self.DEFAULT_PRIVACYSTATUS)
+        set_thumbnail = options.get("set_thumbnail", self.DEFAULT_PRIVACYSTATUS)
         # Extracting schedule date and time from options
         schedule_date_time_str = options.get("scheduleDateTime", None)
         schedule_date_time = None
@@ -86,7 +87,7 @@ class YouTubeUploader:
         )
 
         file_dir = os.path.dirname(options["file"])
-        self.resumable_upload(insert_request, file_dir)
+        self.resumable_upload(insert_request, file_dir, set_thumbnail)
 
     def set_thumbnail(self, file_dir, video_id):
         youtube = self.get_authenticated_service()
@@ -114,7 +115,7 @@ class YouTubeUploader:
             response = thumbnail_upload_request.execute()
             print("Thumbnail uploaded successfully.")
 
-    def resumable_upload(self, insert_request, file_dir):
+    def resumable_upload(self, insert_request, file_dir, set_thumbnail):
         response = None
         error = None
         retry = 0
@@ -133,7 +134,8 @@ class YouTubeUploader:
                         with open('yt_upload.txt', 'w') as f:
                             f.write(f"id={video_id}\n")
 
-                        self.set_thumbnail(file_dir, video_id)
+                        if set_thumbnail:
+                            self.set_thumbnail(file_dir, video_id)
 
                     else:
                         exit("The upload failed with an unexpected response: %s" % response)

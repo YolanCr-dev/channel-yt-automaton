@@ -82,8 +82,7 @@ class AutoUpload():
         except ValueError as e:
             # Handle the case where there are not enough clips available
             num_available_clips = len([file for file in os.listdir(CLIPS_DIR) if file.endswith('.mp4')])
-            print(f"There are only {num_available_clips}/8 CLIPS available. Please add {8 - num_available_clips} CLIPS in order to schedule a new day.")
-            exit(1)  # Exit the script
+            raise ValueError(f"There are only {num_available_clips}/8 CLIPS available. Please add {8 - num_available_clips} CLIPS in order to schedule a new day.")
 
         for clip in clips:
             # Move clip and corresponding txt file
@@ -106,7 +105,7 @@ class AutoUpload():
             file.seek(0)
             json.dump(schedule_data, file, indent=4)
             file.truncate()
-            
+
     def upload_to_youtube(self):
         # Initialize YouTubeUploader
         uploader = YouTubeUploader("client_secrets.json")
@@ -149,11 +148,12 @@ class AutoUpload():
                             "category": getattr(uploader, "DEFAULT_CATEGORY", None),
                             "privacyStatus":  getattr(uploader, "DEFAULT_PRIVACYSTATUS", None),
                             "scheduleDateTime": f"{scheduled_day_date}T{clip['time']}Z",
+                            "set_thumbnail": False
                         }
 
                         # Upload the video
                         print("Uploading video...")
-                        print(options)
+                        print("options", options)
                         uploader.initialize_upload(options) #UPLOAD TO YT
                         print("Video uploaded successfully.")
 
@@ -195,18 +195,27 @@ class AutoUpload():
                             new_text_name = os.path.splitext(new_video_name)[0] + ".txt"
                             new_text_path = os.path.join(new_video_dir, new_text_name)
                             shutil.move(old_text_path, new_text_path)
-                        break
+
+                        # VIDEO UPLOADED - FILES MOVED
+                        # break # ONLY 1 VIDEO A DAY
 
 def main():
 
     self = AutoUpload()
-    while True:
-        command = input("Enter command (e.g., ): ")
-
-        if command.startswith("update"):
-            self.update_schedule()
-        elif command.startswith("upload"):
-            self.upload_to_youtube()
+    
+    try:
+        self.update_schedule()
+    except ValueError as e:
+        print(str(e))
+        pass
+    
+    self.upload_to_youtube()
+    # while True:
+    #     command = input("Enter command (e.g., ): ")
+    #     if command.startswith("update"):
+    #         self.update_schedule()
+    #     elif command.startswith("upload"):
+    #         self.upload_to_youtube()
 
 if __name__ == "__main__":
     main()
