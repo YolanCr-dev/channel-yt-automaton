@@ -208,7 +208,7 @@ def download_from_yt(url, start_time=0, end_time=0, output_dir="ASSETS/CLIPS",):
     # else:
     #     print("Invalid YouTube URL. Please provide a valid URL.")
 
-def upload_to_youtube(video_path, title='', description='', tags='', category='', privacy_status=''):
+def upload_to_youtube(video_path, title='', description='', tags='', category='', privacy_status='', scheduleDateTime=''):
 
     # Initialize YouTubeUploader
     uploader = YouTubeUploader("client_secrets.json")
@@ -220,11 +220,13 @@ def upload_to_youtube(video_path, title='', description='', tags='', category=''
         "description": description,
         "keywords": tags,
         "category": category,
-        "privacyStatus": privacy_status
+        "privacyStatus": privacy_status,
+        "scheduleDateTime": scheduleDateTime,
+        # "scheduleDateTime": "2024-05-06T06:00:00Z"
     }
 
     # Prompt for missing arguments
-    required_args = ["file", "title", "description", "category", "keywords", "privacyStatus"]
+    required_args = ["file", "title", "description", "category", "keywords", "privacyStatus", "scheduleDateTime"]
     # Prompt for missing or empty arguments
     missing_or_empty_args = [arg for arg in required_args if arg not in options or not options[arg]]
 
@@ -443,6 +445,7 @@ def main():
             privacy_status = ""
             topic = ""
             id = ""
+            scheduleDateTime = ""
 
             for arg in args:
                 if arg.startswith("--video_path="):
@@ -461,6 +464,8 @@ def main():
                     topic = arg.split("=")[1]
                 elif arg.startswith("--id="):
                     id = arg.split("=")[1]
+                elif arg.startswith("--scheduleDateTime="):
+                    scheduleDateTime = arg.split("=")[1]
 
             if not video_path and topic and id:
                 directory = os.path.join("ASSETS", "VIDEOS", topic, id)
@@ -471,7 +476,7 @@ def main():
                         break  # Stop after finding the first MP4 file
 
             # Call upload_to_youtube function
-            upload_to_youtube(video_path, title, description, tags, category, privacy_status)
+            upload_to_youtube(video_path, title, description, tags, category, privacy_status, scheduleDateTime)
 
 
         else:

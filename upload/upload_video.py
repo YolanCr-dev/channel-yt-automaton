@@ -6,6 +6,7 @@ import random
 import sys
 import time
 import argparse
+from datetime import datetime
 
 from apiclient.discovery import build
 from apiclient.errors import HttpError
@@ -48,14 +49,19 @@ class YouTubeUploader:
     def initialize_upload(self, options):
         youtube = self.get_authenticated_service()
         
-        tags = options.get("keywords", self.DEFAULT_KEYWORDS).split(",")
         title = options.get("title", "Your Video Title")
         description = options.get("description", "Your video description")
         description_tail = f'''🎬Fair use.
-Copyright Disclaimer Under Section 107 of the Copyright Act 1976, allowance is made for "fair use" for purposes such as criticism, comment, news reporting, teaching, scholarship, and research. Fair use is a use permitted by copyright statute that might otherwise be infringing. Non-profit, educational or personal use tips the balance in favor of fair use. No copyright infringement intended.'''
+        Copyright Disclaimer Under Section 107 of the Copyright Act 1976, allowance is made for "fair use" for purposes such as criticism, comment, news reporting, teaching, scholarship, and research. Fair use is a use permitted by copyright statute that might otherwise be infringing. Non-profit, educational or personal use tips the balance in favor of fair use. No copyright infringement intended.'''
         full_description = f"{description}\n\n{description_tail}"
+        tags = options.get("keywords", self.DEFAULT_KEYWORDS).split(",")
         category = options.get("category", self.DEFAULT_CATEGORY)
         privacy_status = options.get("privacyStatus", self.DEFAULT_PRIVACYSTATUS)
+        # Extracting schedule date and time from options
+        schedule_date_time_str = options.get("scheduleDateTime", None)
+        schedule_date_time = None
+        if schedule_date_time_str:
+            schedule_date_time = datetime.strptime(schedule_date_time_str, "%Y-%m-%dT%H:%M:%SZ")
 
         body = dict(
             snippet=dict(
@@ -68,6 +74,10 @@ Copyright Disclaimer Under Section 107 of the Copyright Act 1976, allowance is m
                 privacyStatus=privacy_status
             )
         )
+
+        # If schedule date and time is provided, add it to the request body
+        if schedule_date_time:
+            body["status"]["publishAt"] = schedule_date_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         insert_request = youtube.videos().insert(
             part=",".join(body.keys()),
@@ -85,14 +95,12 @@ Copyright Disclaimer Under Section 107 of the Copyright Act 1976, allowance is m
         thumbnail_path = os.path.join(file_dir, "thumbnail.jpg")
         while not os.path.exists(thumbnail_path):
             print(f"Thumbnail file 'thumbnail.jpg' not found in the same folder as the video file.")
-            choice = input(f"Upload the thumbnail to this folder '{file_dir}' and press Enter to continue, or enter 'n' to skip (y/n): ")
-            if choice.lower() == 'n':
+            choice = input(f"Upload the thumbnail to this folder '{file_dir}' and press Enter to continue, enter 'y' for manual input, enter 'n' to skip (y/n): ")
+            if choice.lower() == 'y':
                 thumbnail_path = input("Enter the path to the thumbnail file: ")
                 continue
-            print(f"Thumbnail not found, do you want to continue without (y/n)?")
-            choice = input()
-            if choice.lower() == 'n':
-                continue
+            elif choice.lower() == 'n':
+                break
 
         print("Great! I found the thumbnail.")
 
@@ -129,7 +137,7 @@ Copyright Disclaimer Under Section 107 of the Copyright Act 1976, allowance is m
 
                     else:
                         exit("The upload failed with an unexpected response: %s" % response)
-                        
+
             except HttpError as e:
                 if e.resp.status in self.RETRIABLE_STATUS_CODES:
                     error = "A retriable HTTP error %d occurred:\n%s" % (e.resp.status, e.content)
