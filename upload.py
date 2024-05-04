@@ -26,6 +26,7 @@ class AutoUpload():
         pass
 
     def update_schedule(self):
+        while True:
             # Load schedule log
             with open(SCHEDULE_LOG, 'r') as file:
                 schedule_data = json.load(file)
@@ -46,8 +47,6 @@ class AutoUpload():
             upload_times_index = 0  # Keep track of the index for upload times
             for file_name in os.listdir(folder_path):
                 if file_name.endswith('.txt'):
-
-
                     with open(os.path.join(folder_path, file_name), 'r', encoding='utf-8') as txt_file:
                         title = txt_file.readline().strip()
                         description = txt_file.read().strip()
@@ -61,8 +60,16 @@ class AutoUpload():
                             "file_name": file_name.replace(".txt", ".mp4")
                         })
                         upload_times_index += 1  # Move to the next upload time
-                
+            
             self.update_schedule_log(next_day_string, clips_info)
+
+            # Check if there are fewer than 8 clips scheduled
+            num_scheduled_clips = len(clips_info)
+            if num_scheduled_clips < 8:
+                print(f"Scheduled {num_scheduled_clips} clips for {next_day_string}.")
+                break  # Exit the loop if there are fewer than 8 clips scheduled
+            else:
+                print(f"Scheduled 8 clips for {next_day_string}.")
 
     def move_files_to_scheduled_folder(self, date_string):
         # Create folder if it doesn't exist
@@ -99,7 +106,7 @@ class AutoUpload():
             file.seek(0)
             json.dump(schedule_data, file, indent=4)
             file.truncate()
-
+            
     def upload_to_youtube(self):
         # Initialize YouTubeUploader
         uploader = YouTubeUploader("client_secrets.json")
